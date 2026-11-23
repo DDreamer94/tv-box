@@ -62,7 +62,7 @@ function render() {
 async function openPack(token) {
   const bytes = Uint8Array.from(atob(token.replace(/-/g, '+').replace(/_/g, '/') + '='), c => c.charCodeAt(0));
   const key = await crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['decrypt']);
-  const response = await fetch('./catalogue.bin', {signal:AbortSignal.timeout(15000)});
+  const response = await fetch('./catalogue.bin?v=11', {signal:AbortSignal.timeout(15000)});
   if (!response.ok) throw Error('Catalogue download');
   const pack = new Uint8Array(await response.arrayBuffer());
   const clear = await crypto.subtle.decrypt({name:'AES-GCM',iv:pack.slice(0,12)}, key, pack.slice(12));
