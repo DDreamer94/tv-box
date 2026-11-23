@@ -128,9 +128,10 @@ function startStream(useRelay=false) {
   clearTimeout(startTimer);
   startTimer=setTimeout(()=>{if(media.readyState<2)failed();},canFallback?9000:25000);
   media.onloadeddata=()=>clearTimeout(startTimer);
-  if(row.hls)media.crossOrigin='anonymous';else media.removeAttribute('crossorigin');
+  const nativeDirect = canFallback && row.hls && media.canPlayType('application/vnd.apple.mpegurl') !== '';
+  if(row.hls && !nativeDirect)media.crossOrigin='anonymous';else media.removeAttribute('crossorigin');
   const play=()=>media.play().catch(e=>{if(e.name==='NotAllowedError')reveal();});
-  if(row.hls && window.Hls?.isSupported()) {
+  if(row.hls && !nativeDirect && window.Hls?.isSupported()) {
     hls=new Hls(); const instance=hls;
     hls.on(Hls.Events.ERROR,(_,e)=>{if(instance===hls && e.fatal)failed();});
     hls.on(Hls.Events.MANIFEST_PARSED,()=>{if(hls===instance)play();});
