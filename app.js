@@ -13,16 +13,32 @@ function endpoint(value) {
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw Error();
   return url.href.replace(/\/?$/, '/');
 }
-const params = new URLSearchParams(location.hash.slice(1));
-const initial = params.get('catalogue');
 const validKey = /^[A-Za-z0-9_-]{43}$/;
-const suppliedKey = params.get('k') || (initial || base).match(/\/tvbox-([\w-]{43})\/?$/)?.[1];
-if (validKey.test(suppliedKey || '')) localStorage.setItem('catalogueKey', suppliedKey);
-const catalogueKey = localStorage.getItem('catalogueKey');
-if (initial) {
-  try { base = endpoint(initial); localStorage.setItem('catalogue',base); } catch {}
-  // Keep the personal link available when this page is bookmarked or shared.
+let catalogueKey = localStorage.getItem('catalogueKey');
+function readPersonalLink() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const initial = params.get('catalogue');
+  if (initial) {
+    try { base = endpoint(initial); localStorage.setItem('catalogue',base); } catch {}
+  }
+  const key = params.get('k') || (initial || !catalogueKey ? base : '').match(/\/tvbox-([\w-]{43})\/?$/)?.[1];
+  if (validKey.test(key || '') && key !== catalogueKey) {
+    catalogueKey = key;
+    localStorage.setItem('catalogueKey',key);
+    return true;
+  }
+  return false;
 }
+readPersonalLink();
+window.addEventListener('hashchange', () => {
+  if (readPersonalLink()) loadCatalogue();
+});
+window.addEventListener('storage', event => {
+  if (event.key === 'catalogueKey' && validKey.test(event.newValue || '')) {
+    catalogueKey = event.newValue;
+    loadCatalogue();
+  }
+});
 function notice(text, retry=false) {
   const status=el('notice');
   status.textContent=text;
@@ -72,6 +88,7 @@ async function loadCatalogue() {
     }
     if(turn!==request)return;
     rows=entries;notice('');
+    if (catalogueKey) localStorage.removeItem('lastCatalogue');
   } catch {
     if(turn!==request)return;
     notice('Your catalogue could not be loaded. Retry or reopen your personal TV Box link.',true);
@@ -255,5 +272,5 @@ window.addEventListener('appinstalled', () => {
   deferredInstall = null;
   el('install').hidden = true;
 });
-if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'}).catch(()=>{});
 loadCatalogue();

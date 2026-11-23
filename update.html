@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><meta name="theme-color" content="#11252a">
+<title>Update TV Box</title><link rel="stylesheet" href="./style.css">
+</head>
+<body><main class="shelf"><h1>TV Box</h1><p role="status" id="status">Updating your app…</p><button id="retry" hidden>Retry update</button></main>
+<script>
+const retry = document.getElementById('retry');
+async function update() {
+  retry.hidden = true;
+  document.getElementById('status').textContent = 'Updating your app…';
+  try {
+    // A new navigation path also reaches this page through older cache-first workers.
+    if ('serviceWorker' in navigator) {
+      const registration = await navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'});
+      await registration.update();
+      const worker = registration.installing || registration.waiting || registration.active;
+      if (!worker) throw Error('No worker');
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => finish(false), 45000);
+        function finish(ok) {
+          clearTimeout(timeout);
+          worker.removeEventListener('statechange', check);
+          ok ? resolve() : reject(Error('Update incomplete'));
+        }
+        function check() {
+          if (worker.state === 'activated') finish(true);
+          else if (worker.state === 'redundant') finish(false);
+        }
+        worker.addEventListener('statechange', check);
+        check();
+      });
+    }
+    const next = new URL('./?updated=9', location.href);
+    next.hash = location.hash;
+    location.replace(next.href);
+  } catch {
+    document.getElementById('status').textContent = 'The update could not finish. Check your connection and retry.';
+    retry.hidden = false;
+  }
+}
+retry.onclick = update;
+update();
+</script></body></html>
