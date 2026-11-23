@@ -21,7 +21,7 @@ if (initial) {
 function notice(text) { el('notice').textContent = text; el('notice').hidden = !text; }
 function render() {
   const query = el('query').value.trim().toLocaleLowerCase();
-  const matches = rows.filter(r => (r.name+' '+r.language).toLocaleLowerCase().includes(query));
+  const matches = rows.filter(r => (r.name+' '+r.language+' '+(r.film?'film':'live channel')).toLocaleLowerCase().includes(query));
   const list = el('list'); list.replaceChildren();
   el('count').textContent = matches.length+' '+(matches.length === 1 ? 'title' : 'titles');
   for (const r of matches) {
@@ -79,7 +79,7 @@ function fail(text) {el('error').querySelector('p').textContent=text; el('error'
 function openPlayer(row,from) {
   active=row;opener=from;history.pushState({player:true},'',location.pathname+'#watch');
   el('library').hidden=true;screen.hidden=false;locked=false;screen.classList.remove('locked');
-  el('lock').textContent='Lock';el('lock').setAttribute('aria-pressed','false');el('title').textContent=row.name;
+  el('lock').textContent='Lock controls';el('lock').setAttribute('aria-pressed','false');el('title').textContent=row.name;
   el('sync').hidden=row.film;el('seek').hidden=!row.film;el('feedback').hidden=true;
   el('back').focus();startStream();reveal();
 }
@@ -109,7 +109,7 @@ function closePlayer(){
 }
 el('back').onclick=()=>history.back();
 window.onpopstate=()=>{if(active){if(locked){history.pushState({player:true},'',location.pathname+'#watch');reveal();}else closePlayer();}};
-el('lock').onclick=()=>{locked=!locked;screen.classList.toggle('locked',locked);el('lock').textContent=locked?'Unlock':'Lock';el('lock').setAttribute('aria-pressed',String(locked));el('feedback').hidden=true;reveal();};
+el('lock').onclick=()=>{locked=!locked;screen.classList.toggle('locked',locked);el('lock').textContent=locked?'Unlock':'Lock controls';el('lock').setAttribute('aria-pressed',String(locked));el('feedback').hidden=true;reveal();};
 el('play').onclick=()=>{if(media.paused)media.play().catch(()=>fail('Playback could not start.'));else media.pause();reveal();};
 function liveTarget() {
   if(Number.isFinite(hls?.liveSyncPosition))return hls.liveSyncPosition;
