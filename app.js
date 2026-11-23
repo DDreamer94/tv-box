@@ -18,7 +18,12 @@ if (initial) {
   try { base = endpoint(initial); localStorage.setItem('catalogue',base); } catch {}
   history.replaceState(null,'',location.pathname);
 }
-function notice(text) { el('notice').textContent = text; el('notice').hidden = !text; }
+function notice(text, retry=false) {
+  const status=el('notice');
+  status.textContent=text;
+  if(retry)status.append(' ',action('Retry connection',loadCatalogue));
+  status.hidden=!text;
+}
 function render() {
   const query = el('query').value.trim().toLocaleLowerCase();
   const matches = rows.filter(r => (r.name+' '+r.language+' '+(r.film?'film':'live channel')).toLocaleLowerCase().includes(query));
@@ -36,7 +41,7 @@ function render() {
 async function loadCatalogue() {
   const turn=++request;
   rows=films;
-  if (!base) { notice('Connect your personal catalogue to watch live TV.'); render(); return; }
+  if (!base) { notice('Three open films are available. Connect your personal catalogue for live TV.'); render(); return; }
   const cached=localStorage.getItem('lastCatalogue');
   try { const copy=JSON.parse(cached); if (copy?.base===base) rows=copy.rows; } catch {}
   render(); notice('Connecting to your catalogue…');
@@ -51,7 +56,7 @@ async function loadCatalogue() {
     });
     if(turn!==request)return;
     rows=entries;localStorage.setItem('lastCatalogue',JSON.stringify({base,rows}));notice('');
-  } catch { if(turn!==request)return; notice('Catalogue unavailable. Connect to Tailscale, allow local network access if prompted, then retry in Catalogue.'); }
+  } catch { if(turn!==request)return; notice((rows===films?'Showing three open films.':'Showing your saved list.')+' Connect to Tailscale and allow local network access to load your catalogue.',true); }
   render();
 }
 el('query').oninput=render;
@@ -90,6 +95,7 @@ function teardown() {
 function startStream() {
   teardown();el('error').hidden=true;
   const row=active;
+  if(row.hls)media.crossOrigin='anonymous';else media.removeAttribute('crossorigin');
   const play=()=>media.play().catch(e=>{if(e.name==='NotAllowedError')reveal();});
   if(row.hls && window.Hls?.isSupported()) {
     hls=new Hls(); const instance=hls;
