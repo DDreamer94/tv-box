@@ -185,7 +185,41 @@ document.onkeydown=e=>{
     const items=[...el('list').children]; const index=items.indexOf(document.activeElement);
     items[Math.max(0,Math.min(items.length-1,index+(e.key==='ArrowDown'?1:-1)))]?.focus();e.preventDefault();}
 };
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;el('install').hidden=false;});
-el('install').onclick=async()=>{if(deferredInstall){await deferredInstall.prompt();deferredInstall=null;el('install').hidden=true;}};
+const android = /Android/i.test(navigator.userAgent) || navigator.userAgentData?.platform === 'Android';
+const ios = !android && (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+
+function showHomeScreenGuide() {
+  const box = settings('Add TV Box to your Home Screen');
+  const steps = document.createElement('p');
+  steps.textContent = 'In Safari, tap Share, then Add to Home Screen. If you see Open as Web App, turn it on. Tap Add to finish.';
+  box.append(steps);
+  localStorage.setItem('iosInstallGuideSeen', '1');
+}
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  if (android || ios || standalone()) return;
+  deferredInstall = event;
+  el('install').hidden = false;
+});
+el('install').onclick = async () => {
+  if (ios && !standalone()) {
+    showHomeScreenGuide();
+  } else if (deferredInstall) {
+    await deferredInstall.prompt();
+    deferredInstall = null;
+    el('install').hidden = true;
+  }
+};
+if (ios && !standalone()) {
+  el('install').hidden = false;
+  if (!localStorage.getItem('iosInstallGuideSeen')) showHomeScreenGuide();
+}
+window.addEventListener('appinstalled', () => {
+  deferredInstall = null;
+  el('install').hidden = true;
+});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 loadCatalogue();
