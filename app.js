@@ -16,7 +16,7 @@ function endpoint(value) {
 const initial = new URLSearchParams(location.hash.slice(1)).get('catalogue');
 if (initial) {
   try { base = endpoint(initial); localStorage.setItem('catalogue',base); } catch {}
-  history.replaceState(null,'',location.pathname);
+  // Keep the personal link available when this page is bookmarked or shared.
 }
 function notice(text, retry=false) {
   const status=el('notice');
@@ -41,7 +41,7 @@ function render() {
 async function loadCatalogue() {
   const turn=++request;
   rows=films;
-  if (!base) { notice('Three open films are available. Connect your personal catalogue for live TV.'); render(); return; }
+  if (!base) { notice('Open your personal TV Box link on this device to watch live TV.'); render(); return; }
   const cached=localStorage.getItem('lastCatalogue');
   try { const copy=JSON.parse(cached); if (copy?.base===base) rows=copy.rows; } catch {}
   render(); notice('Connecting to your catalogue…');
@@ -56,7 +56,7 @@ async function loadCatalogue() {
     });
     if(turn!==request)return;
     rows=entries;localStorage.setItem('lastCatalogue',JSON.stringify({base,rows}));notice('');
-  } catch { if(turn!==request)return; notice((rows===films?'Showing three open films.':'Showing your saved list.')+' Connect to Tailscale and allow local network access to load your catalogue.',true); }
+  } catch { if(turn!==request)return; notice((rows===films?'Showing three open films.':'Showing your saved list.')+' Your catalogue is unreachable. Check your internet connection or reopen your latest personal link.',true); }
   render();
 }
 el('query').oninput=render;
@@ -71,10 +71,10 @@ function action(text,fn) {
 }
 el('connect').onclick=()=>{
   const box=settings('Personal catalogue');
-  const label=document.createElement('label');label.textContent='Private catalogue address';
-  const input=document.createElement('input');input.type='url';input.value=base;input.placeholder='https://…';label.append(input);
-  box.append(label,action('Connect',()=>{try {base=endpoint(input.value.trim());localStorage.setItem('catalogue',base);dialog.close();loadCatalogue();} catch {input.setCustomValidity('Enter a secure HTTPS address.');input.reportValidity();}}));
-  input.oninput=()=>input.setCustomValidity('');
+  const message=document.createElement('p');
+  message.textContent=base?'Refresh the channel list from your personal catalogue.':'Open your personal TV Box link on this device to load your channels.';
+  box.append(message);
+  if(base) box.append(action('Refresh catalogue',()=>{dialog.close();loadCatalogue();}));
 };
 function reveal() {
   screen.classList.remove('asleep'); clearTimeout(timer);
