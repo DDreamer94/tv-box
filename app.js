@@ -112,23 +112,24 @@ function teardown() {
   media.pause();media.removeAttribute('src');media.load();
 }
 let startTimer, playbackAttempt=0;
-function startStream(useRelay=false) {
+function startStream(mode='direct') {
   teardown();el('error').hidden=true;
   const attempt=++playbackAttempt;
   const row=active;
-  const source=(!useRelay && row.direct) || row.src;
+  const source=(mode!=='relay' && row.direct) || row.src;
   const canFallback=source!==row.src;
+  const nativeAvailable=row.hls && media.canPlayType('application/vnd.apple.mpegurl') !== '';
+  const nativeDirect=canFallback && nativeAvailable && (mode==='native' || !window.Hls?.isSupported());
   const failed=()=>{
     if(attempt!==playbackAttempt || active!==row)return;
     clearTimeout(startTimer);
-    if(canFallback)startStream(true);
+    if(canFallback)startStream(nativeAvailable && !nativeDirect ? 'native' : 'relay');
     else fail('This stream could not be played over this connection. Try again or choose another title.');
   };
   media.onerror=()=>{if(media.error)failed();};
   clearTimeout(startTimer);
   startTimer=setTimeout(()=>{if(media.readyState<2)failed();},canFallback?9000:25000);
   media.onloadeddata=()=>clearTimeout(startTimer);
-  const nativeDirect = canFallback && row.hls && media.canPlayType('application/vnd.apple.mpegurl') !== '';
   if(row.hls && !nativeDirect)media.crossOrigin='anonymous';else media.removeAttribute('crossorigin');
   const play=()=>media.play().catch(e=>{if(e.name==='NotAllowedError')reveal();});
   if(row.hls && !nativeDirect && window.Hls?.isSupported()) {
