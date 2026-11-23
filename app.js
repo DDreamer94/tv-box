@@ -13,7 +13,12 @@ function endpoint(value) {
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw Error();
   return url.href.replace(/\/?$/, '/');
 }
-const initial = new URLSearchParams(location.hash.slice(1)).get('catalogue');
+const params = new URLSearchParams(location.hash.slice(1));
+const initial = params.get('catalogue');
+const validKey = /^[A-Za-z0-9_-]{43}$/;
+const suppliedKey = params.get('k') || (initial || base).match(/\/tvbox-([\w-]{43})\/?$/)?.[1];
+if (validKey.test(suppliedKey || '')) localStorage.setItem('catalogueKey', suppliedKey);
+const catalogueKey = localStorage.getItem('catalogueKey');
 if (initial) {
   try { base = endpoint(initial); localStorage.setItem('catalogue',base); } catch {}
   // Keep the personal link available when this page is bookmarked or shared.
@@ -38,25 +43,39 @@ function render() {
   }
   if (!matches.length) list.textContent='No matching titles.';
 }
+async function openPack(token) {
+  const bytes = Uint8Array.from(atob(token.replace(/-/g, '+').replace(/_/g, '/') + '='), c => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['decrypt']);
+  const response = await fetch('./catalogue.bin', {signal:AbortSignal.timeout(15000)});
+  if (!response.ok) throw Error('Catalogue download');
+  const pack = new Uint8Array(await response.arrayBuffer());
+  const clear = await crypto.subtle.decrypt({name:'AES-GCM',iv:pack.slice(0,12)}, key, pack.slice(12));
+  const {relay,rows:titles} = JSON.parse(new TextDecoder().decode(clear));
+  return titles.map(row => ({...row,src:new URL('stream/'+row.id,relay).href}));
+}
 async function loadCatalogue() {
   const turn=++request;
-  rows=films;
-  if (!base) { notice('Open your personal TV Box link on this device to watch live TV.'); render(); return; }
-  const cached=localStorage.getItem('lastCatalogue');
-  try { const copy=JSON.parse(cached); if (copy?.base===base) rows=copy.rows; } catch {}
-  render(); notice('Connecting to your catalogue…');
+  if (!base && !catalogueKey) { notice('Open your personal TV Box link on this device to watch live TV.'); render(); return; }
+  notice('Loading your catalogue…');
   try {
-    const response=await fetch(base+'catalog.json',{signal:AbortSignal.timeout(12000),cache:'no-store'});
-    if(!response.ok) throw Error();
-    const items=await response.json();
-    if(!Array.isArray(items)||!items.length) throw Error();
-    const entries=items.map(r=>{
-      if (!r.name || !r.language || !/^stream\/[a-f0-9]+$/.test(r.src)) throw Error();
-      return {...r,src:new URL(r.src,base).href};
-    });
+    let entries;
+    if (catalogueKey) {
+      entries=await openPack(catalogueKey);
+    } else {
+      const response=await fetch(base+'catalog.json',{signal:AbortSignal.timeout(12000),cache:'no-store'});
+      if(!response.ok) throw Error();
+      const items=await response.json();
+      entries=items.map(r=>{
+        if (!r.name || !r.language || !/^stream\/[a-f0-9]+$/.test(r.src)) throw Error();
+        return {...r,src:new URL(r.src,base).href};
+      });
+    }
     if(turn!==request)return;
-    rows=entries;localStorage.setItem('lastCatalogue',JSON.stringify({base,rows}));notice('');
-  } catch { if(turn!==request)return; notice((rows===films?'Showing three open films.':'Showing your saved list.')+' Your catalogue is unreachable. Check your internet connection or reopen your latest personal link.',true); }
+    rows=entries;notice('');
+  } catch {
+    if(turn!==request)return;
+    notice('Your catalogue could not be loaded. Retry or reopen your personal TV Box link.',true);
+  }
   render();
 }
 el('query').oninput=render;
@@ -72,9 +91,9 @@ function action(text,fn) {
 el('connect').onclick=()=>{
   const box=settings('Personal catalogue');
   const message=document.createElement('p');
-  message.textContent=base?'Refresh the channel list from your personal catalogue.':'Open your personal TV Box link on this device to load your channels.';
+  message.textContent=(base || catalogueKey)?'Refresh the channel list from your personal catalogue.':'Open your personal TV Box link on this device to load your channels.';
   box.append(message);
-  if(base) box.append(action('Refresh catalogue',()=>{dialog.close();loadCatalogue();}));
+  if(base || catalogueKey) box.append(action('Refresh catalogue',()=>{dialog.close();loadCatalogue();}));
 };
 function reveal() {
   screen.classList.remove('asleep'); clearTimeout(timer);
@@ -92,24 +111,37 @@ function teardown() {
   if(hls){hls.destroy();hls=null;}
   media.pause();media.removeAttribute('src');media.load();
 }
-function startStream() {
+let startTimer, playbackAttempt=0;
+function startStream(useRelay=false) {
   teardown();el('error').hidden=true;
+  const attempt=++playbackAttempt;
   const row=active;
+  const source=(!useRelay && row.direct) || row.src;
+  const canFallback=source!==row.src;
+  const failed=()=>{
+    if(attempt!==playbackAttempt || active!==row)return;
+    clearTimeout(startTimer);
+    if(canFallback)startStream(true);
+    else fail('This stream could not be played over this connection. Try again or choose another title.');
+  };
+  media.onerror=()=>{if(media.error)failed();};
+  clearTimeout(startTimer);
+  startTimer=setTimeout(()=>{if(media.readyState<2)failed();},canFallback?9000:25000);
+  media.onloadeddata=()=>clearTimeout(startTimer);
   if(row.hls)media.crossOrigin='anonymous';else media.removeAttribute('crossorigin');
   const play=()=>media.play().catch(e=>{if(e.name==='NotAllowedError')reveal();});
   if(row.hls && window.Hls?.isSupported()) {
     hls=new Hls(); const instance=hls;
-    hls.on(Hls.Events.ERROR,(_,e)=>{if(instance===hls && e.fatal)fail('This live feed could not be played. Check your connection or try another title.');});
+    hls.on(Hls.Events.ERROR,(_,e)=>{if(instance===hls && e.fatal)failed();});
     hls.on(Hls.Events.MANIFEST_PARSED,()=>{if(hls===instance)play();});
     hls.on(Hls.Events.AUDIO_TRACKS_UPDATED,()=>restoreTracks());
     hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED,()=>restoreTracks());
-    hls.loadSource(row.src);hls.attachMedia(media);
-  } else { media.src=row.src;play(); }
+    hls.loadSource(source);hls.attachMedia(media);
+  } else { media.src=source;play(); }
 }
-media.onerror=()=>{if(active && media.error)fail('This feed or media format is unavailable in this browser.');};
-el('retry').onclick=startStream;
+el('retry').onclick=()=>startStream();
 function closePlayer(){
-  active=null;teardown();clearTimeout(timer);gesture=null;screen.hidden=true;screen.classList.remove('locked','asleep');el('library').hidden=false;
+  clearTimeout(startTimer);playbackAttempt++;active=null;teardown();clearTimeout(timer);gesture=null;screen.hidden=true;screen.classList.remove('locked','asleep');el('library').hidden=false;
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
   opener?.focus({preventScroll:true});
 }
