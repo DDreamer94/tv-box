@@ -31,7 +31,7 @@ function readPersonalLink() {
 }
 readPersonalLink();
 window.addEventListener('hashchange', () => {
-  if (readPersonalLink()) loadCatalogue();
+  if (readPersonalLink()) { setInstallManifest(); loadCatalogue(); }
 });
 window.addEventListener('storage', event => {
   if (event.key === 'catalogueKey' && validKey.test(event.newValue || '')) {
@@ -69,9 +69,65 @@ async function openPack(token) {
   const {relay,rows:titles} = JSON.parse(new TextDecoder().decode(clear));
   return titles.map(row => ({...row,src:new URL('stream/'+row.id,relay).href}));
 }
+function keyFromLink(value) {
+  try {
+    const url = new URL(value.trim());
+    if (url.origin !== location.origin || !url.pathname.startsWith(new URL('./',location.href).pathname)) return null;
+    const params = new URLSearchParams(url.hash.slice(1));
+    const key = params.get('k') || params.get('catalogue')?.match(/\/tvbox-([\w-]{43})\/?$/)?.[1];
+    return validKey.test(key || '') ? key : null;
+  } catch { return null; }
+}
+
+async function connectFromClipboard() {
+  // Start the clipboard read inside the user's tap for browsers requiring activation.
+  const read = navigator.clipboard?.readText?.();
+  const box = settings('Connect this app');
+  const label = document.createElement('label');
+  label.textContent = 'Paste your personal TV Box link';
+  const field = document.createElement('input');
+  field.type = 'password';
+  field.autocomplete = 'off';
+  field.spellcheck = false;
+  label.append(field);
+  const message = document.createElement('p');
+  message.setAttribute('role','status');
+  let busy = false;
+  async function connect(value) {
+    if (busy || !dialog.open || !box.contains(field)) return;
+    const key = keyFromLink(value);
+    if (!key) {
+      message.textContent = 'Copy your personal TV Box link, then paste it here.';
+      return;
+    }
+    busy = true;
+    try {
+      const entries = await openPack(key);
+      if (!dialog.open || !box.contains(field)) return;
+      ++request;
+      catalogueKey = key;
+      localStorage.setItem('catalogueKey',key);
+      localStorage.removeItem('lastCatalogue');
+      field.value = '';
+      rows = entries;
+      notice('');
+      render();
+      setInstallManifest();
+      dialog.close();
+    } catch { message.textContent = 'Could not open the catalogue with that link. Check your connection and try again.'; }
+    finally { busy = false; }
+  }
+  field.addEventListener('input',()=>{if(keyFromLink(field.value))connect(field.value);});
+  box.append(label,action('Connect',()=>connect(field.value)),message);
+  try { if (read) await connect(await read); } catch { field.focus(); }
+}
+
+function showConnectButton() {
+  el('notice').append(' ',action('Connect from copied link',connectFromClipboard));
+}
 async function loadCatalogue() {
   const turn=++request;
-  if (!base && !catalogueKey) { notice('Open your personal TV Box link on this device to watch live TV.'); render(); return; }
+  if (!base && !catalogueKey) { notice('Connect your personal catalogue on this device.'); showConnectButton(); render(); return; }
   notice('Loading your catalogue…');
   try {
     let entries;
@@ -91,7 +147,7 @@ async function loadCatalogue() {
     if (catalogueKey) localStorage.removeItem('lastCatalogue');
   } catch {
     if(turn!==request)return;
-    notice('Your catalogue could not be loaded. Retry or reopen your personal TV Box link.',true);
+    notice('Your catalogue could not be loaded.',true); showConnectButton();
   }
   render();
 }
@@ -111,6 +167,7 @@ el('connect').onclick=()=>{
   message.textContent=(base || catalogueKey)?'Refresh the channel list from your personal catalogue.':'Open your personal TV Box link on this device to load your channels.';
   box.append(message);
   if(base || catalogueKey) box.append(action('Refresh catalogue',()=>{dialog.close();loadCatalogue();}));
+  box.append(action('Connect from copied link',connectFromClipboard));
 };
 function reveal() {
   screen.classList.remove('asleep'); clearTimeout(timer);
@@ -264,13 +321,66 @@ el('install').onclick = async () => {
     el('install').hidden = true;
   }
 };
+function showCopyLink() {
+  const box = settings('Connect your Home Screen app');
+  const personal = new URL('./',location.href);
+  personal.hash = new URLSearchParams({k:catalogueKey}).toString();
+  const message = document.createElement('p');
+  message.textContent = 'Copy your link, then open the TV Box icon and tap Connect from copied link.';
+  const button = action('Copy personal link',async()=>{
+    try {
+      await navigator.clipboard.writeText(personal.href);
+      button.textContent='Link copied';
+      message.textContent='Open your TV Box icon now and tap Connect from copied link.';
+    } catch {
+      const input=document.createElement('input');
+      input.readOnly=true;
+      input.value=personal.href;
+      input.setAttribute('aria-label','Personal TV Box link');
+      box.append(input);
+      input.select();
+      message.textContent='Choose Copy for the selected link, then return to your TV Box icon.';
+      button.hidden=true;
+    }
+  });
+  box.append(message,button);
+}
+const transferring = new URLSearchParams(location.search).get('connect') === 'home' && catalogueKey;
+if (transferring) showCopyLink();
 if (ios && !standalone()) {
   el('install').hidden = false;
-  if (!localStorage.getItem('iosInstallGuideSeen')) showHomeScreenGuide();
+  if (!transferring && !localStorage.getItem('iosInstallGuideSeen')) showHomeScreenGuide();
 }
 window.addEventListener('appinstalled', () => {
   deferredInstall = null;
   el('install').hidden = true;
 });
-if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'}).catch(()=>{});
+async function setInstallManifest() {
+  const link = el('app-manifest');
+  if (!catalogueKey || !navigator.serviceWorker?.controller) {
+    link.href = './manifest.webmanifest';
+    return;
+  }
+  try {
+    const token = catalogueKey;
+    const response = await fetch('./manifest.webmanifest');
+    if (!response.ok) throw Error('Manifest unavailable');
+    const manifest = await response.json();
+    manifest.start_url = './#k=' + token;
+    // The private manifest lives only in this browser. Its request URL contains no key.
+    const fingerprint = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));
+    const address = './manifest.webmanifest?personal=' + Array.from(new Uint8Array(fingerprint).slice(0,12),b=>b.toString(16).padStart(2,'0')).join('');
+    const cache = await caches.open('tvbox-install');
+    const old = await cache.keys();
+    await cache.put(address,new Response(JSON.stringify(manifest),{headers:{'Content-Type':'application/manifest+json'}}));
+    if (token !== catalogueKey) return;
+    link.href = address;
+    for (const entry of old) if (entry.url !== link.href) await cache.delete(entry);
+  } catch { link.href = './manifest.webmanifest'; }
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', setInstallManifest);
+  navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'}).catch(()=>{});
+}
+setInstallManifest();
 loadCatalogue();
